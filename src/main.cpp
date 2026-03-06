@@ -1,129 +1,256 @@
+#include "data_loader.h"
+#include "backtest_engine.h"
+#include "strategy/ema_crossover.h"
+#include "strategy/supertrend_strategy.h"
 #include <iostream>
+#include <filesystem>
 #include <vector>
-#include <string>
-#include "../include/MarketData.hpp"
-#include "../include/CSVParser.hpp"
-#include "../include/KeltnerIndicator.hpp"
-#include "../include/TradingStrategy.hpp"
-#include "../include/BacktestEngine.hpp"
-#include "../include/TradeLogger.hpp"
 
-int main(int argc, char* argv[]) {
-    std::cout << "\n" << std::string(60, '=') << std::endl;
-    std::cout << "    KELTNER CHANNEL BACKTESTING ENGINE" << std::endl;
-    std::cout << "    High-Performance C++ Trading Strategy Analyzer" << std::endl;
-    std::cout << std::string(60, '=') << "\n" << std::endl;
-    
-    std::string data_file = "data/market_data.csv";
-    if (argc > 1) {
-        data_file = argv[1];
-    }
-    
-    MarketData market_data;
-    CSVParser parser;
-    
-    std::cout << "Loading market data from: " << data_file << std::endl;
-    if (!parser.loadFromFile(data_file, market_data)) {
-        std::cerr << "Failed to load market data. Exiting." << std::endl;
-        return 1;
-    }
-    
-    if (market_data.size() == 0) {
-        std::cerr << "No data loaded. Please check your CSV file." << std::endl;
-        return 1;
-    }
-    
-    const double CAPITAL = 2000000.0;
-    
-    std::vector<ParameterSet> parameter_sets;
-    
-    std::vector<int> ema_periods = {10, 20, 30, 50};
-    std::vector<int> atr_periods = {10, 14, 20};
-    std::vector<double> multipliers = {1.5, 2.0, 2.5, 3.0};
-    
-    std::cout << "\nGenerating parameter combinations..." << std::endl;
-    std::cout << "EMA Periods: ";
-    for (int ema : ema_periods) std::cout << ema << " ";
-    std::cout << "\nATR Periods: ";
-    for (int atr : atr_periods) std::cout << atr << " ";
-    std::cout << "\nMultipliers: ";
-    for (double mult : multipliers) std::cout << mult << " ";
-    std::cout << "\n" << std::endl;
-    
-    for (int ema : ema_periods) {
-        for (int atr : atr_periods) {
-            for (double mult : multipliers) {
-                parameter_sets.emplace_back(ema, atr, mult);
+using namespace backtest;
+
+void printUsage()
+{
+    std::cout << "\nBacktest Engine - High Performance Trading Strategy Tester\n"
+              << std::endl;
+    std::cout << "Usage: ./backtest_engine [options]\n"
+              << std::endl;
+    std::cout << "Options:" << std::endl;
+    std::cout << "  --convert-csv      Convert market_data.csv to Parquet format" << std::endl;
+    std::cout << "  --strategy NAME    Strategy name (EMA_Crossover, Supertrend)" << std::endl;
+    std::cout << "  --params P1,P2,... Strategy parameters (comma-separated)" << std::endl;
+    std::cout << "  --dte N            DTE filter (1-5, or -1 for all)" << std::endl;
+    std::cout << "  --optimize         Run parameter optimization" << std::endl;
+    std::cout << "\nExamples:" << std::endl;
+    std::cout << "  ./backtest_engine --convert-csv" << std::endl;
+    std::cout << "  ./backtest_engine --strategy EMA_Crossover --params 5,20 --dte 1" << std::endl;
+    std::cout << "  ./backtest_engine --strategy Supertrend --optimize" << std::endl;
+}
+
+std::vector<StrategyParams> generateEMACombinations()
+{
+    std::vector<StrategyParams> combinations;
+
+    // EMA Fast: 5, 10, 15
+    // EMA Slow: 20, 30, 40, 50
+    // DTE: 1, 2, 3, 4, 5
+
+    std::vector<int> fast_periods = {5, 10, 15};
+    std::vector<int> slow_periods = {20, 30, 40, 50};
+    std::vector<int> dte_values = {1, 2, 3, 4, 5};
+
+    for (int fast : fast_periods)
+    {
+        for (int slow : slow_periods)
+        {
+            if (fast >= slow)
+                continue;
+
+            for (int dte : dte_values)
+            {
+                StrategyParams params;
+                params.strategy_name = "EMA_Crossover";
+                params.params = {static_cast<double>(fast), static_cast<double>(slow)};
+                params.dte_filter = dte;
+                combinations.push_back(params);
             }
         }
     }
-    
-    std::cout << "Total combinations to test: " << parameter_sets.size() << "\n" << std::endl;
-    
-    BacktestEngine engine(CAPITAL);
-    engine.loadMarketData(market_data);
-    
-    int num_threads = std::thread::hardware_concurrency();
-    if (num_threads == 0) num_threads = 4;
-    
-    std::cout << "System CPU threads available: " << num_threads << "\n" << std::endl;
-    
-    auto start_time = std::chrono::high_resolution_clock::now();
-    
-    engine.runParallelBacktests(parameter_sets, num_threads);
-    
-    auto end_time = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
-    
-    std::cout << "\n" << std::string(60, '=') << std::endl;
-    std::cout << "Backtesting completed in " << duration.count() / 1000.0 << " seconds" << std::endl;
-    std::cout << std::string(60, '=') << "\n" << std::endl;
-    
-    const auto& results = engine.getResults();
-    
-    TradeLogger logger("output");
-    
-    std::cout << "Exporting trade logs..." << std::endl;
-    if (logger.exportTradeLogs(results)) {
-        std::cout << "Trade logs exported successfully!" << std::endl;
-    } else {
-        std::cerr << "Error exporting trade logs." << std::endl;
-    }
-    
-    std::cout << "\nExporting summary report..." << std::endl;
-    if (logger.exportSummaryReport(results)) {
-        std::cout << "Summary report exported successfully!" << std::endl;
-    } else {
-        std::cerr << "Error exporting summary report." << std::endl;
-    }
-    
-    engine.printSummary();
-    
-    std::cout << "\n" << std::string(60, '=') << std::endl;
-    std::cout << "All results saved in 'output/' directory" << std::endl;
-    std::cout << std::string(60, '=') << "\n" << std::endl;
-    
-    double best_pnl = -1e9;
-    const BacktestResult* best_result = nullptr;
-    
-    for (const auto& result : results) {
-        if (result.total_profit_loss > best_pnl) {
-            best_pnl = result.total_profit_loss;
-            best_result = &result;
+
+    return combinations;
+}
+
+std::vector<StrategyParams> generateSupertrendCombinations()
+{
+    std::vector<StrategyParams> combinations;
+
+    // Period: 7, 10, 14
+    // Multiplier: 1.5, 2.0, 2.5, 3.0
+    // DTE: 1, 2, 3, 4, 5
+
+    std::vector<int> periods = {7, 10, 14};
+    std::vector<double> multipliers = {1.5, 2.0, 2.5, 3.0};
+    std::vector<int> dte_values = {1, 2, 3, 4, 5};
+
+    for (int period : periods)
+    {
+        for (double mult : multipliers)
+        {
+            for (int dte : dte_values)
+            {
+                StrategyParams params;
+                params.strategy_name = "Supertrend";
+                params.params = {static_cast<double>(period), mult};
+                params.dte_filter = dte;
+                combinations.push_back(params);
+            }
         }
     }
-    
-    if (best_result != nullptr) {
-        std::cout << "\nBEST PERFORMING PARAMETERS:" << std::endl;
-        std::cout << std::string(60, '-') << std::endl;
-        std::cout << "EMA Period: " << best_result->ema_period << std::endl;
-        std::cout << "ATR Period: " << best_result->atr_period << std::endl;
-        std::cout << "Multiplier: " << best_result->multiplier << std::endl;
-        std::cout << "Total P&L: Rs " << best_result->total_profit_loss << std::endl;
-        std::cout << "Total Trades: " << best_result->trades.size() << std::endl;
-        std::cout << "Win Rate: " << best_result->win_rate << "%" << std::endl;
-        std::cout << std::string(60, '-') << "\n" << std::endl;
+
+    return combinations;
+}
+
+int main(int argc, char *argv[])
+{
+    std::cout << "==================================" << std::endl;
+    std::cout << "   Backtest Engine v1.0" << std::endl;
+    std::cout << "   High-Performance Strategy Tester" << std::endl;
+    std::cout << "==================================" << std::endl;
+
+    std::string csv_path = "market_data.csv";
+    std::string parquet_path = "market_data.parquet";
+    std::string output_dir = "output";
+
+    // Create output directory
+    std::filesystem::create_directories(output_dir);
+    std::filesystem::create_directories(output_dir + "/trades");
+
+    // Parse command line arguments
+    bool convert_csv = false;
+    bool optimize = false;
+    std::string strategy_name;
+    std::vector<double> params;
+    int dte_filter = -1;
+
+    for (int i = 1; i < argc; ++i)
+    {
+        std::string arg = argv[i];
+
+        if (arg == "--convert-csv")
+        {
+            convert_csv = true;
+        }
+        else if (arg == "--strategy" && i + 1 < argc)
+        {
+            strategy_name = argv[++i];
+        }
+        else if (arg == "--params" && i + 1 < argc)
+        {
+            std::string params_str = argv[++i];
+            std::istringstream ss(params_str);
+            std::string token;
+            while (std::getline(ss, token, ','))
+            {
+                params.push_back(std::stod(token));
+            }
+        }
+        else if (arg == "--dte" && i + 1 < argc)
+        {
+            dte_filter = std::stoi(argv[++i]);
+        }
+        else if (arg == "--optimize")
+        {
+            optimize = true;
+        }
+        else if (arg == "--help" || arg == "-h")
+        {
+            printUsage();
+            return 0;
+        }
     }
-    
+
+    // Convert CSV to Parquet if needed
+    if (convert_csv || !std::filesystem::exists(parquet_path))
+    {
+        std::cout << "\nStep 1: Converting CSV to Parquet format..." << std::endl;
+        if (!DataLoader::convertCSVToParquet(csv_path, parquet_path))
+        {
+            std::cerr << "Error: Failed to convert CSV to Parquet" << std::endl;
+            return 1;
+        }
+    }
+
+    // Load data
+    std::cout << "\nStep 2: Loading market data from Parquet..." << std::endl;
+    std::vector<Bar> bars = DataLoader::loadFromParquet(parquet_path);
+    if (bars.empty())
+    {
+        std::cerr << "Error: No data loaded" << std::endl;
+        return 1;
+    }
+
+    std::cout << "Loaded " << bars.size() << " bars" << std::endl;
+    std::cout << "Date range: " << bars.front().date << " to " << bars.back().date << std::endl;
+
+    // Create engine
+    BacktestEngine engine(2000000.0); // 20 Lakh INR
+
+    if (optimize)
+    {
+        // Run optimization
+        std::cout << "\nStep 3: Running parameter optimization..." << std::endl;
+
+        std::vector<StrategyParams> combinations;
+
+        if (strategy_name.empty() || strategy_name == "EMA_Crossover")
+        {
+            std::cout << "Generating EMA Crossover combinations..." << std::endl;
+            auto ema_combos = generateEMACombinations();
+            combinations.insert(combinations.end(), ema_combos.begin(), ema_combos.end());
+        }
+
+        if (strategy_name.empty() || strategy_name == "Supertrend")
+        {
+            std::cout << "Generating Supertrend combinations..." << std::endl;
+            auto st_combos = generateSupertrendCombinations();
+            combinations.insert(combinations.end(), st_combos.begin(), st_combos.end());
+        }
+
+        std::cout << "Total combinations to test: " << combinations.size() << std::endl;
+
+        std::vector<PerformanceMetrics> results = engine.runOptimization(
+            bars,
+            strategy_name.empty() ? "ALL" : strategy_name,
+            combinations,
+            output_dir + "/trades");
+
+        std::cout << "\nOptimization complete! Results saved to " << output_dir << std::endl;
+        std::cout << "Run Python analysis: python analytics/analyze_results.py" << std::endl;
+    }
+    else if (!strategy_name.empty() && !params.empty())
+    {
+        // Run single backtest
+        std::cout << "\nStep 3: Running single backtest..." << std::endl;
+
+        StrategyParams strat_params;
+        strat_params.strategy_name = strategy_name;
+        strat_params.params = params;
+        strat_params.dte_filter = dte_filter;
+
+        TradeLogger logger;
+
+        auto strategy = engine.createStrategy(strategy_name);
+        if (!strategy)
+        {
+            std::cerr << "Error: Unknown strategy: " << strategy_name << std::endl;
+            return 1;
+        }
+
+        PerformanceMetrics metrics = engine.runBacktest(bars, strategy.get(), strat_params, logger);
+
+        // Print results
+        std::cout << "\n=== Backtest Results ===" << std::endl;
+        std::cout << "Strategy: " << strategy_name << std::endl;
+        std::cout << "Parameters: " << strat_params.to_string() << std::endl;
+        std::cout << "Total Trades: " << metrics.total_trades << std::endl;
+        std::cout << "Winning Trades: " << metrics.winning_trades << std::endl;
+        std::cout << "Losing Trades: " << metrics.losing_trades << std::endl;
+        std::cout << "Win Rate: " << metrics.win_rate << "%" << std::endl;
+        std::cout << "Total PnL: ₹" << metrics.total_pnl << std::endl;
+        std::cout << "Total Return: " << metrics.total_return_pct << "%" << std::endl;
+        std::cout << "Profit Factor: " << metrics.profit_factor << std::endl;
+        std::cout << "Expectancy: ₹" << metrics.expectancy << std::endl;
+        std::cout << "Max Drawdown: " << metrics.max_drawdown << "%" << std::endl;
+
+        // Save trades
+        std::string trades_file = output_dir + "/trades/single_backtest.parquet";
+        logger.saveToParquet(trades_file);
+        std::cout << "\nTrades saved to: " << trades_file << std::endl;
+    }
+    else
+    {
+        printUsage();
+        return 1;
+    }
+
     return 0;
 }
